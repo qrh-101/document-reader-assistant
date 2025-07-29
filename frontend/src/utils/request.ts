@@ -1,12 +1,11 @@
-import axios from 'axios'
-import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
+import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
-import type { ApiResponse, ErrorResponse } from '@/types/api'
+import type { ApiResponse } from '@/types/api'
 
 // 创建axios实例
 const request: AxiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
-  timeout: 30000,
+  baseURL: 'http://localhost:8000/api/v1',
+  timeout: 120000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -15,7 +14,6 @@ const request: AxiosInstance = axios.create({
 // 请求拦截器
 request.interceptors.request.use(
   (config) => {
-    // 可以在这里添加token等认证信息
     return config
   },
   (error) => {
@@ -25,8 +23,13 @@ request.interceptors.request.use(
 
 // 响应拦截器
 request.interceptors.response.use(
-  (response: AxiosResponse<ApiResponse>) => {
+  (response: AxiosResponse) => {
     const { data } = response
+    
+    // 如果是blob响应，直接返回
+    if (response.config.responseType === 'blob') {
+      return response
+    }
     
     // 如果响应成功但业务状态码不是200
     if (data.code !== 200) {
@@ -112,11 +115,60 @@ export const download = (url: string, filename?: string): Promise<void> => {
     const downloadUrl = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = downloadUrl
-    link.download = filename || 'download'
+    
+    // 优先使用传入的文件名，其次从响应头获取，最后使用默认文件名
+    let finalFilename = filename
+    if (!finalFilename) {
+      const contentDisposition = response.headers['content-disposition']
+      console.log('Content-Disposition header:', contentDisposition)
+      
+      if (contentDisposition) {
+        // 解析Content-Disposition头，优先使用filename*
+        let filenameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/)
+        console.log('filename* match:', filenameMatch)
+        
+        if (!filenameMatch) {
+          filenameMatch = contentDisposition.match(/filename="([^"]+)"/)
+          console.log('filename="..." match:', filenameMatch)
+        }
+        if (!filenameMatch) {
+          filenameMatch = contentDisposition.match(/filename=([^;]+)/)
+          console.log('filename=... match:', filenameMatch)
+        }
+        
+        if (filenameMatch && filenameMatch[1]) {
+          try {
+            // 解码URL编码的文件名
+            finalFilename = decodeURIComponent(filenameMatch[1])
+            console.log('Decoded filename:', finalFilename)
+            // 确保有.md扩展名
+            if (!finalFilename.endsWith('.md')) {
+              finalFilename += '.md'
+            }
+          } catch (e) {
+            console.warn('Failed to decode filename:', e)
+            finalFilename = '研究报告.md'
+          }
+        } else {
+          console.log('No filename match found, using default')
+          finalFilename = '研究报告.md'
+        }
+      } else {
+        console.log('No Content-Disposition header found, using default')
+        finalFilename = '研究报告.md'
+      }
+    }
+    
+    console.log('Download filename:', finalFilename)
+    link.download = finalFilename
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
     window.URL.revokeObjectURL(downloadUrl)
+  }).catch((error) => {
+    console.error('Download failed:', error)
+    ElMessage.error('下载失败')
+    throw error
   })
 }
 

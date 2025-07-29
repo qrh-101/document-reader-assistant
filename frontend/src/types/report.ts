@@ -11,9 +11,12 @@ export interface ReportMetadata {
   total_chunks: number
   processed_chunks: number
   token_per_chunk: number
+  chunk_size?: number
+  overlap_size?: number
+  model_context_length?: number
   processing_time: number
   model_used: string
-  created_at: string
+  created_at?: string
 }
 
 // 报告处理进度
@@ -30,9 +33,9 @@ export interface ReportContent {
   id: string
   title: string
   content: string
-  metadata: ReportMetadata
-  created_at: string
-  updated_at: string
+  metadata?: any
+  created_at?: string
+  updated_at?: string
 }
 
 // 报告搜索参数

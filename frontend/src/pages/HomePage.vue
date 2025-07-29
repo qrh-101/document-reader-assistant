@@ -125,7 +125,7 @@
               <h3 class="text-xl font-semibold text-gray-900 mb-4">技术优势</h3>
               <ul class="space-y-2 text-gray-600">
                 <li>• 先进的PDF解析技术</li>
-                <li>• 基于GPT-4的智能分析</li>
+                <li>• 基于大模型的智能分析</li>
                 <li>• 语义分片处理算法</li>
                 <li>• 实时进度跟踪</li>
               </ul>

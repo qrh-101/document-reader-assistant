@@ -1,11 +1,12 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 import os
 import tempfile
 from typing import Optional
 from loguru import logger
 
 from app.services.report_service import ReportService
+from app.services.prompt_service import PromptService
 from app.schemas.report_schema import (
     GenerateReportResponse,
     StandardResponse,
@@ -15,6 +16,7 @@ from app.core.config import settings
 
 router = APIRouter()
 report_service = ReportService()
+prompt_service = PromptService()
 
 @router.post("/generate_report", response_model=StandardResponse)
 async def generate_report(
@@ -70,19 +72,63 @@ async def download_report(report_id: str):
         # 获取报告内容
         report_content = report_service.get_report(report_id)
         
+        # 获取报告标题用于文件名
+        report_title = report_service.get_report_title(report_id)
+        
+        # 清理文件名中的特殊字符，确保文件名合法
+        import re
+        import urllib.parse
+        
+        # 使用英文文件名避免编码问题
+        english_filename = f"research_report_{report_id}"
+        
+        # 准备中文文件名用于Content-Disposition头
+        safe_filename = re.sub(r'[<>:"/\\|?*]', '_', report_title)
+        safe_filename = safe_filename.replace(' ', '_')
+        
+        # URL编码中文文件名用于filename*参数
+        encoded_filename = urllib.parse.quote(safe_filename)
+        
         # 创建临时文件用于下载
         temp_file_path = None
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.md', mode='w', encoding='utf-8') as temp_file:
+            # 创建临时文件并写入内容
+            temp_file_path = tempfile.mktemp(suffix='.md')
+            with open(temp_file_path, 'w', encoding='utf-8') as temp_file:
                 temp_file.write(report_content)
-                temp_file_path = temp_file.name
             
-            # 返回文件响应
-            return FileResponse(
-                path=temp_file_path,
-                filename=f"research_report_{report_id}.md",
+            async def cleanup_temp_file():
+                """异步清理临时文件的函数"""
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                        logger.info(f"Cleaned up temp file: {temp_file_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup temp file {temp_file_path}: {e}")
+            
+            def file_generator():
+                try:
+                    with open(temp_file_path, 'rb') as f:
+                        yield from f
+                except Exception as e:
+                    logger.error(f"Error reading file {temp_file_path}: {e}")
+                    raise
+                finally:
+                    # Ensure cleanup happens even if client disconnects or error occurs
+                    try:
+                        if os.path.exists(temp_file_path):
+                            os.unlink(temp_file_path)
+                            logger.info(f"Cleaned up temp file: {temp_file_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup temp file {temp_file_path}: {e}")
+            
+            return StreamingResponse(
+                file_generator(),
                 media_type="text/markdown",
-                background=lambda: os.unlink(temp_file_path) if os.path.exists(temp_file_path) else None
+                headers={
+                    "Content-Disposition": f'attachment; filename="{english_filename}.md"; filename*=UTF-8\'\'{encoded_filename}.md',
+                    "Access-Control-Expose-Headers": "Content-Disposition"
+                }
             )
             
         except Exception as e:
@@ -120,16 +166,18 @@ async def get_report(report_id: str):
     """获取报告详情"""
     try:
         report_content = report_service.get_report(report_id)
-        
+        metadata = report_service.get_report_metadata(report_id)
+        created_at = report_service.get_report_created_at(report_id)
         return StandardResponse(
             code=200,
             msg="success",
             data={
                 "report_id": report_id,
-                "content": report_content
+                "content": report_content,
+                "report_metadata": metadata,
+                "created_at": created_at
             }
         )
-        
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="报告不存在")
     except Exception as e:
@@ -170,4 +218,54 @@ async def health_check():
             "status": "healthy",
             "service": "research"
         }
-    ) 
+    )
+
+@router.get("/prompts/versions", response_model=StandardResponse)
+async def get_prompt_versions():
+    """获取可用的提示词版本列表"""
+    try:
+        versions = prompt_service.get_available_prompt_versions()
+        return StandardResponse(
+            code=200,
+            msg="success",
+            data={
+                "available_versions": versions,
+                "current_version": prompt_service.prompt_version
+            }
+        )
+    except Exception as e:
+        logger.error(f"获取提示词版本列表失败: {e}")
+        raise HTTPException(status_code=500, detail="获取提示词版本列表失败")
+
+@router.get("/prompts/info/{version}", response_model=StandardResponse)
+async def get_prompt_info(version: str):
+    """获取指定提示词版本的详细信息"""
+    try:
+        info = prompt_service.get_prompt_info(version)
+        if "error" in info:
+            raise HTTPException(status_code=404, detail=info["error"])
+        
+        return StandardResponse(
+            code=200,
+            msg="success",
+            data=info
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取提示词信息失败: {e}")
+        raise HTTPException(status_code=500, detail="获取提示词信息失败")
+
+@router.get("/prompts/current", response_model=StandardResponse)
+async def get_current_prompt_info():
+    """获取当前使用的提示词信息"""
+    try:
+        info = prompt_service.get_prompt_info()
+        return StandardResponse(
+            code=200,
+            msg="success",
+            data=info
+        )
+    except Exception as e:
+        logger.error(f"获取当前提示词信息失败: {e}")
+        raise HTTPException(status_code=500, detail="获取当前提示词信息失败") 

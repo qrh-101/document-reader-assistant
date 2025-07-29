@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     max_tokens_per_chunk: int = 500
     temperature: float = 0.7
     
+    # 提示词配置
+    prompt_version: str = "default"  # 可选值: default, v1, v2, v3
+    
     # PDF处理配置
     chunk_strategy: str = "semantic"
     max_chunk_size: int = 2000
@@ -33,6 +36,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = False
+    
+    # 超时配置
+    request_timeout: int = 300  # 请求超时时间（秒）
+    llm_api_timeout: int = 60   # LLM API调用超时时间（秒）
     
     model_config = {
         "env_file": ".env",

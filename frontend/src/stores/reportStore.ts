@@ -38,6 +38,8 @@ export const useReportStore = defineStore('report', () => {
 
   // 生成报告
   const createReport = async (file: File, question: string) => {
+    let progressInterval: NodeJS.Timeout | null = null
+    
     try {
       loading.value = true
       progress.value = {
@@ -47,7 +49,7 @@ export const useReportStore = defineStore('report', () => {
       }
 
       // 模拟进度更新
-      const progressInterval = setInterval(() => {
+      progressInterval = setInterval(() => {
         if (progress.value.progress < 90) {
           progress.value.progress += Math.random() * 10
           progress.value.message = `正在处理中... ${Math.round(progress.value.progress)}%`
@@ -56,7 +58,9 @@ export const useReportStore = defineStore('report', () => {
 
       const response = await generateReport(file, question)
       
-      clearInterval(progressInterval)
+      if (progressInterval) {
+        clearInterval(progressInterval)
+      }
       progress.value = {
         status: ReportStatus.COMPLETED,
         progress: 100,
@@ -74,15 +78,31 @@ export const useReportStore = defineStore('report', () => {
       reports.value.unshift(newReport)
       
       ElMessage.success('报告生成成功！')
-      return response.data.data
+      return response.data
       
-    } catch (error) {
+    } catch (error: any) {
+      if (progressInterval) {
+        clearInterval(progressInterval)
+      }
       progress.value = {
         status: ReportStatus.FAILED,
         progress: 0,
         message: '报告生成失败'
       }
-      ElMessage.error('报告生成失败')
+      
+      // 根据错误类型提供不同的提示
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        ElMessage.error('请求超时，请稍后重试。大文件处理可能需要更长时间。')
+      } else if (error.response?.status === 413) {
+        ElMessage.error('文件太大，请选择小于50MB的文件')
+      } else if (error.response?.status === 400) {
+        ElMessage.error(error.response.data?.msg || '请求参数错误')
+      } else if (error.response?.status === 500) {
+        ElMessage.error('服务器内部错误，请稍后重试')
+      } else {
+        ElMessage.error('报告生成失败，请检查网络连接后重试')
+      }
+      
       throw error
     } finally {
       loading.value = false
@@ -105,28 +125,23 @@ export const useReportStore = defineStore('report', () => {
 
   // 获取报告详情
   const fetchReportDetail = async (reportId: string) => {
+    console.log(`[DEBUG] fetchReportDetail called with reportId: ${reportId}`)
     try {
       loading.value = true
       const response = await getReportDetail(reportId)
-      
+      console.log('[DEBUG] getReportDetail response:', response.data)
       currentReport.value = {
         id: response.data.report_id,
         title: '研究报告',
         content: response.data.content,
-        metadata: {
-          total_chunks: 0,
-          processed_chunks: 0,
-          token_per_chunk: 0,
-          processing_time: 0,
-          model_used: '',
-          created_at: new Date().toISOString()
-        },
-        created_at: new Date().toISOString(),
+        metadata: response.data.report_metadata || {},
+        created_at: response.data.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       }
-      
+      console.log(`[DEBUG] fetchReportDetail completed for reportId: ${reportId}`)
       return currentReport.value
     } catch (error) {
+      console.error(`[DEBUG] fetchReportDetail failed for reportId: ${reportId}`, error)
       ElMessage.error('获取报告详情失败')
       throw error
     } finally {

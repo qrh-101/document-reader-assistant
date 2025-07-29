@@ -50,6 +50,7 @@ const goHome = () => {
 // 组件挂载时获取报告
 onMounted(async () => {
   const reportId = route.params.id as string
+  console.log(`[DEBUG] ReportPage onMounted called with reportId: ${reportId}`)
   if (reportId) {
     try {
       await reportStore.fetchReportDetail(reportId)

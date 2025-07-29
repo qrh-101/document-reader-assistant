@@ -197,8 +197,21 @@ const handleSubmit = async () => {
     // 跳转到报告页面
     router.push(`/report/${result.report_id}`)
     
-  } catch (error) {
+  } catch (error: any) {
     console.error('生成报告失败:', error)
+    
+    // 根据错误类型提供不同的提示
+    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+      ElMessage.error('请求超时，请稍后重试。大文件处理可能需要更长时间。')
+    } else if (error.response?.status === 413) {
+      ElMessage.error('文件太大，请选择小于50MB的文件')
+    } else if (error.response?.status === 400) {
+      ElMessage.error(error.response.data?.msg || '请求参数错误')
+    } else if (error.response?.status === 500) {
+      ElMessage.error('服务器内部错误，请稍后重试')
+    } else {
+      ElMessage.error('生成报告失败，请检查网络连接后重试')
+    }
   } finally {
     loading.value = false
   }

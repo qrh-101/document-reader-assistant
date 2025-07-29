@@ -72,13 +72,10 @@ class ReportService:
             
             markdown_report = self._combine_report_parts(report_parts)
             
-            # 4. 保存报告
-            self._save_report(report_id, markdown_report, question)
-            
-            # 5. 计算处理时间
+            # 4. 计算处理时间
             processing_time = time.time() - start_time
             
-            # 6. 构建元数据
+            # 5. 构建元数据
             metadata = ReportMetadata(
                 total_chunks=total_chunks,
                 processed_chunks=processed_chunks,
@@ -89,6 +86,9 @@ class ReportService:
                 processing_time=processing_time,
                 model_used=settings.model_name
             )
+            
+            # 6. 保存报告
+            self._save_report(report_id, markdown_report, question, metadata)
             
             logger.info(f"Report generation completed: {report_id}")
             
@@ -110,7 +110,7 @@ class ReportService:
                 messages=messages,
                 max_tokens=settings.max_tokens_per_chunk,
                 temperature=settings.temperature,
-                timeout=60
+                timeout=settings.llm_api_timeout
             )
             
             content = response.choices[0].message.content
@@ -157,7 +157,7 @@ class ReportService:
         
         return '\n'.join(cleaned_lines)
     
-    def _save_report(self, report_id: str, markdown_report: str, question: str):
+    def _save_report(self, report_id: str, markdown_report: str, question: str, metadata: ReportMetadata = None):
         """保存报告到文件"""
         try:
             # 确保reports目录存在
@@ -171,6 +171,18 @@ class ReportService:
                 f.write(f"**研究问题**: {question}\n\n")
                 f.write(f"**报告ID**: {report_id}\n\n")
                 f.write(f"**生成时间**: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                
+                # 保存元数据
+                if metadata:
+                    f.write(f"**总片段数**: {metadata.total_chunks}\n\n")
+                    f.write(f"**已处理片段**: {metadata.processed_chunks}\n\n")
+                    f.write(f"**每片段Token数**: {metadata.token_per_chunk}\n\n")
+                    f.write(f"**分片大小**: {metadata.chunk_size}\n\n")
+                    f.write(f"**重叠大小**: {metadata.overlap_size}\n\n")
+                    f.write(f"**模型上下文长度**: {metadata.model_context_length}\n\n")
+                    f.write(f"**处理时间**: {metadata.processing_time:.2f}秒\n\n")
+                    f.write(f"**使用模型**: {metadata.model_used}\n\n")
+                
                 f.write("---\n\n")
                 f.write(markdown_report)
             
@@ -244,3 +256,86 @@ class ReportService:
         except Exception as e:
             logger.error(f"Error listing reports: {e}")
             raise 
+
+    def get_report_metadata(self, report_id: str) -> dict:
+        """从报告文件中提取元数据"""
+        try:
+            report_file_path = os.path.join(settings.reports_dir, f"{report_id}.md")
+            if not os.path.exists(report_file_path):
+                return {}
+            
+            with open(report_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            lines = content.split('\n')
+            metadata = {}
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith('**总片段数**:'):
+                    metadata['total_chunks'] = int(line.replace('**总片段数**:', '').strip())
+                elif line.startswith('**已处理片段**:'):
+                    metadata['processed_chunks'] = int(line.replace('**已处理片段**:', '').strip())
+                elif line.startswith('**每片段Token数**:'):
+                    metadata['token_per_chunk'] = int(line.replace('**每片段Token数**:', '').strip())
+                elif line.startswith('**分片大小**:'):
+                    metadata['chunk_size'] = int(line.replace('**分片大小**:', '').strip())
+                elif line.startswith('**重叠大小**:'):
+                    metadata['overlap_size'] = int(line.replace('**重叠大小**:', '').strip())
+                elif line.startswith('**模型上下文长度**:'):
+                    metadata['model_context_length'] = int(line.replace('**模型上下文长度**:', '').strip())
+                elif line.startswith('**处理时间**:'):
+                    time_str = line.replace('**处理时间**:', '').replace('秒', '').strip()
+                    metadata['processing_time'] = float(time_str)
+                elif line.startswith('**使用模型**:'):
+                    metadata['model_used'] = line.replace('**使用模型**:', '').strip()
+            
+            return metadata
+            
+        except Exception as e:
+            logger.warning(f"Error reading report metadata for {report_id}: {e}")
+            return {}
+
+    def get_report_title(self, report_id: str) -> str:
+        """提取报告标题"""
+        try:
+            report_content = self.get_report(report_id)
+            
+            # 查找报告标题
+            lines = report_content.split('\n')
+            for line in lines:
+                line = line.strip()
+                # 查找第一个一级标题（# 标题）
+                if line.startswith('# ') and not line.startswith('# 研究报告'):
+                    title = line.replace('# ', '').strip()
+                    return title
+            
+            # 如果没有找到标题，使用研究问题作为标题
+            for line in lines:
+                if line.startswith('**研究问题**:'):
+                    question = line.replace('**研究问题**:', '').strip()
+                    return f"{question}研究报告"
+            
+            # 默认标题
+            return f"研究报告_{report_id}"
+            
+        except Exception as e:
+            logger.error(f"Error extracting report title for {report_id}: {e}")
+            return f"研究报告_{report_id}"
+
+    def get_report_created_at(self, report_id: str) -> str:
+        """从报告文件中提取创建时间（如有）"""
+        try:
+            report_file_path = os.path.join(settings.reports_dir, f"{report_id}.md")
+            if not os.path.exists(report_file_path):
+                return ""
+            with open(report_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            lines = content.split('\n')
+            for line in lines:
+                if line.startswith('**生成时间**:'):
+                    return line.replace('**生成时间**:', '').strip()
+            return ""
+        except Exception as e:
+            logger.warning(f"Error reading report created_at for {report_id}: {e}")
+            return "" 

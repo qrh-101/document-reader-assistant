@@ -4,7 +4,7 @@
     <div class="report-header">
       <div class="flex items-center justify-between mb-6">
         <div>
-          <h1 class="text-3xl font-bold text-gray-900 mb-2">研究报告</h1>
+          <h1 class="text-3xl font-bold text-gray-900 mb-2">智能文档研究助手</h1>
           <p class="text-gray-600">基于AI智能分析生成的专业研究报告</p>
         </div>
         
@@ -46,12 +46,20 @@
         </div>
       </div>
       
+      <!-- 研究问题 -->
+      <div class="research-question mb-6">
+        <div class="card bg-blue-50 border-blue-200">
+          <h3 class="text-lg font-semibold text-blue-900 mb-2">研究问题</h3>
+          <p class="text-blue-800">{{ extractResearchQuestion() }}</p>
+        </div>
+      </div>
+      
       <!-- 报告元数据 -->
       <div class="report-meta">
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div class="meta-item">
             <span class="meta-label">报告ID</span>
-            <span class="meta-value">{{ report?.id || 'N/A' }}</span>
+            <span class="meta-value font-mono text-sm">{{ report?.id || 'N/A' }}</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">生成时间</span>
@@ -60,6 +68,10 @@
           <div class="meta-item">
             <span class="meta-label">处理时间</span>
             <span class="meta-value">{{ formatDuration(report?.metadata?.processing_time ?? 0) }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">使用模型</span>
+            <span class="meta-value">{{ report?.metadata?.model_used ?? 'N/A' }}</span>
           </div>
         </div>
       </div>
@@ -94,8 +106,27 @@
             <div class="stat-label">每片段Token数</div>
           </div>
           <div class="stat-item">
-            <div class="stat-value">{{ report?.metadata?.model_used ?? 'N/A' }}</div>
-            <div class="stat-label">使用模型</div>
+            <div class="stat-value">{{ report?.metadata?.chunk_size ?? 0 }}</div>
+            <div class="stat-label">分片大小</div>
+          </div>
+        </div>
+        
+        <!-- 技术参数 -->
+        <div class="mt-6 pt-6 border-t border-gray-200">
+          <h4 class="text-md font-medium text-gray-700 mb-3">技术参数</h4>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="tech-param">
+              <span class="param-label">重叠大小</span>
+              <span class="param-value">{{ report?.metadata?.overlap_size ?? 0 }} 字符</span>
+            </div>
+            <div class="tech-param">
+              <span class="param-label">模型上下文长度</span>
+              <span class="param-value">{{ formatNumber(report?.metadata?.model_context_length ?? 0) }}</span>
+            </div>
+            <div class="tech-param">
+              <span class="param-label">处理效率</span>
+              <span class="param-value">{{ calculateEfficiency() }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -132,8 +163,55 @@ const report = computed(() => reportStore.currentReport)
 // 渲染Markdown内容
 const renderedContent = computed(() => {
   if (!report.value?.content) return ''
-  return marked(report.value.content)
+  
+  // 过滤掉重复的元数据信息和通用标题
+  let content = report.value.content
+  
+  // 移除元数据部分（从第一个**开始到---结束）
+  const metadataStart = content.indexOf('**研究问题**:')
+  const separatorIndex = content.indexOf('---')
+  
+  if (metadataStart !== -1 && separatorIndex !== -1 && separatorIndex > metadataStart) {
+    // 获取实际内容部分（从---之后开始）
+    const actualContent = content.substring(separatorIndex + 3) // 跳过---和换行
+    
+    // 移除通用的"# 研究报告"标题，保留具体的报告标题
+    const lines = actualContent.split('\n')
+    const filteredLines = []
+    let skipNextEmptyLine = false
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      
+      // 跳过"# 研究报告"标题
+      if (line.trim() === '# 研究报告') {
+        skipNextEmptyLine = true
+        continue
+      }
+      
+      // 跳过"# 研究报告"后面的空行
+      if (skipNextEmptyLine && line.trim() === '') {
+        skipNextEmptyLine = false
+        continue
+      }
+      
+      filteredLines.push(line)
+    }
+    
+    content = filteredLines.join('\n')
+  }
+  
+  return marked(content)
 })
+
+// 提取研究问题
+const extractResearchQuestion = () => {
+  if (!report.value?.content) return 'N/A'
+  
+  // 匹配后端保存的格式：**研究问题**: 问题内容
+  const questionMatch = report.value.content.match(/\*\*研究问题\*\*: (.+?)(?=\n\n)/);
+  return questionMatch ? questionMatch[1].trim() : 'N/A';
+}
 
 // 格式化日期
 const formatDate = (dateString?: string): string => {
@@ -148,6 +226,23 @@ const formatDuration = (seconds?: number): string => {
   const minutes = Math.floor(seconds / 60)
   const remainingSeconds = seconds % 60
   return `${minutes}分${remainingSeconds.toFixed(0)}秒`
+}
+
+// 格式化数字
+const formatNumber = (num: number): string => {
+  if (num === null || num === undefined) return 'N/A'
+  return num.toLocaleString('zh-CN')
+}
+
+// 计算处理效率
+const calculateEfficiency = (): string => {
+  if (!report.value?.metadata?.processing_time || !report.value?.metadata?.total_chunks) {
+    return 'N/A'
+  }
+  const totalSeconds = report.value.metadata.processing_time
+  const totalChunks = report.value.metadata.total_chunks
+  const avgTimePerChunk = totalSeconds / totalChunks
+  return `${avgTimePerChunk.toFixed(2)}秒/片段`
 }
 
 // 下载报告
@@ -233,19 +328,6 @@ const handleDelete = async () => {
     }
   }
 }
-
-// 组件挂载时获取报告详情
-onMounted(async () => {
-  const reportId = route.params.id as string
-  if (reportId) {
-    try {
-      await reportStore.fetchReportDetail(reportId)
-    } catch (error) {
-      ElMessage.error('获取报告失败')
-      router.push('/')
-    }
-  }
-})
 </script>
 
 <style scoped>
@@ -282,7 +364,7 @@ onMounted(async () => {
 }
 
 .stat-item {
-  @apply text-center p-4 bg-gray-50 rounded-lg;
+  @apply text-center p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors;
 }
 
 .stat-value {
@@ -291,6 +373,50 @@ onMounted(async () => {
 
 .stat-label {
   @apply text-sm text-gray-600;
+}
+
+.tech-param {
+  @apply text-center p-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors;
+}
+
+.param-label {
+  @apply text-sm text-gray-500 block mb-1;
+}
+
+.param-value {
+  @apply text-sm font-medium text-gray-900;
+}
+
+.card {
+  @apply bg-white rounded-lg shadow-sm border border-gray-200 p-6;
+}
+
+.markdown-content {
+  @apply prose prose-gray max-w-none;
+}
+
+.markdown-content h1 {
+  @apply text-2xl font-bold text-gray-900 mb-4;
+}
+
+.markdown-content h2 {
+  @apply text-xl font-semibold text-gray-800 mb-3;
+}
+
+.markdown-content h3 {
+  @apply text-lg font-medium text-gray-700 mb-2;
+}
+
+.markdown-content p {
+  @apply text-gray-700 leading-relaxed mb-4;
+}
+
+.markdown-content ul, .markdown-content ol {
+  @apply mb-4;
+}
+
+.markdown-content li {
+  @apply text-gray-700 mb-1;
 }
 
 /* 打印样式 */

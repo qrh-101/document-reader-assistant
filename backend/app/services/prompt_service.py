@@ -2,25 +2,31 @@ import os
 from typing import Dict, Any
 from loguru import logger
 from app.core.config import settings
+from app.prompts.prompt_manager import prompt_manager
 
 class PromptService:
     """Prompt构建与参数渲染服务"""
     
     def __init__(self):
-        self.prompt_template_path = "app/prompts/system_prompt.md"
-        self.prompt_template = self._load_prompt_template()
+        self.prompt_version = settings.prompt_version
+        logger.info(f"初始化PromptService，使用提示词版本: {self.prompt_version}")
     
     def _load_prompt_template(self) -> str:
         """加载系统Prompt模板"""
         try:
-            with open(self.prompt_template_path, 'r', encoding='utf-8') as f:
-                template = f.read()
-            logger.info(f"Successfully loaded prompt template from {self.prompt_template_path}")
+            template = prompt_manager.load_prompt(self.prompt_version)
+            logger.info(f"成功加载提示词版本: {self.prompt_version}")
             return template
         except Exception as e:
-            logger.error(f"Error loading prompt template: {e}")
-            # 返回默认模板
-            return self._get_default_template()
+            logger.error(f"加载提示词版本 {self.prompt_version} 失败: {e}")
+            # 尝试加载默认版本
+            try:
+                template = prompt_manager.load_prompt("default")
+                logger.info("回退到默认提示词版本")
+                return template
+            except Exception as e2:
+                logger.error(f"加载默认提示词也失败: {e2}")
+                return self._get_default_template()
     
     def _get_default_template(self) -> str:
         """获取默认的Prompt模板"""
@@ -80,14 +86,14 @@ class PromptService:
                 "total_chunks": total_chunks
             }
             
-            # 渲染模板
-            rendered_prompt = self.prompt_template.format(**template_params)
+            # 使用提示词管理器格式化模板
+            rendered_prompt = prompt_manager.format_prompt(self.prompt_version, **template_params)
             
-            logger.info(f"Successfully rendered prompt for chunk {chunk_index + 1}/{total_chunks}")
+            logger.info(f"成功渲染提示词，版本: {self.prompt_version}, 片段: {chunk_index + 1}/{total_chunks}")
             return rendered_prompt
             
         except Exception as e:
-            logger.error(f"Error rendering prompt: {e}")
+            logger.error(f"渲染提示词失败: {e}")
             raise
     
     def build_chat_messages(self, question: str, chunk_content: str, chunk_index: int = 0, total_chunks: int = 1) -> list:
@@ -135,5 +141,16 @@ class PromptService:
             "chunk_content_length": len(chunk_content),
             "max_tokens_per_chunk": settings.max_tokens_per_chunk,
             "model_name": settings.model_name,
-            "temperature": settings.temperature
-        } 
+            "temperature": settings.temperature,
+            "prompt_version": self.prompt_version
+        }
+    
+    def get_available_prompt_versions(self) -> list:
+        """获取可用的提示词版本列表"""
+        return prompt_manager.get_available_versions()
+    
+    def get_prompt_info(self, version: str = None) -> Dict:
+        """获取提示词信息"""
+        if version is None:
+            version = self.prompt_version
+        return prompt_manager.get_prompt_info(version) 
